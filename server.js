@@ -1,4 +1,4 @@
-// E:\du an\Flutter\file_manager_app\backend\server.js (Bản sửa lỗi cuối)
+// E:\du an\Flutter\file_manager_app\backend\server.js (Đã Sửa Lỗi Truy Vấn 2 Lần)
 
 const express = require('express');
 const cors = require('cors');
@@ -9,7 +9,7 @@ const multer = require('multer');
 const app = express();
 const PORT = process.env.PORT || 3000; 
 
-// --- CẤU HÌNH CLOUDINARY (SỬ DỤNG BIẾN MÔI TRƯỜNG) ---
+// --- CẤU HÌNH CLOUDINARY ---
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
@@ -20,7 +20,13 @@ const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
         folder: 'flutter_file_manager', 
-        resource_type: 'auto', 
+        // QUAN TRỌNG: Phân biệt resource_type giữa 'image' và 'raw' (tài liệu/file)
+        resource_type: (req, file) => {
+            if (file.mimetype.startsWith('image/')) {
+                return 'image';
+            }
+            return 'raw'; // Dùng 'raw' cho các file khác như .txt, .bat, .pdf
+        },
         public_id: (req, file) => Date.now().toString() + '-' + file.originalname.split('.')[0]
     },
 });
@@ -30,20 +36,36 @@ const upload = multer({ storage: storage });
 app.use(cors());
 app.use(express.text()); 
 
-// === 1. GET: Lấy danh sách file (ĐÃ SỬA LỖI QUERY CUỐI CÙNG) ===
+// === 1. GET: Lấy danh sách file (TRUY VẤN 2 LẦN ĐỂ LẤY TẤT CẢ CÁC LOẠI FILE) ===
 app.get('/list', async (req, res) => {
     try {
-        // Truy vấn Cloudinary để lấy danh sách tài nguyên
-        const result = await cloudinary.api.resources({
+        const prefix = 'flutter_file_manager/';
+
+        // 1. Truy vấn loại 'raw' (tài liệu, .bat, .txt)
+        const rawFilesPromise = cloudinary.api.resources({
             type: 'upload', 
-            prefix: 'flutter_file_manager/',
-            max_results: 100
+            prefix: prefix,
+            resource_type: 'raw',
+            max_results: 50
         });
+
+        // 2. Truy vấn loại 'image'
+        const imageFilesPromise = cloudinary.api.resources({
+            type: 'upload', 
+            prefix: prefix,
+            resource_type: 'image',
+            max_results: 50
+        });
+
+        // Đợi cả hai truy vấn hoàn thành
+        const [rawResult, imageResult] = await Promise.all([rawFilesPromise, imageFilesPromise]);
         
-        // Logs này sẽ hiển thị số lượng file tìm thấy
-        console.log(`Cloudinary found ${result.resources.length} files.`); 
+        const allResources = [...rawResult.resources, ...imageResult.resources];
+
+        // Debug log cuối cùng
+        console.log(`Cloudinary found ${allResources.length} files (Raw: ${rawResult.resources.length}, Image: ${imageResult.resources.length}).`);
         
-        const fileList = result.resources.map(resource => ({
+        const fileList = allResources.map(resource => ({
             name: resource.public_id, 
             size: resource.bytes, 
             url: resource.secure_url, 
@@ -58,6 +80,7 @@ app.get('/list', async (req, res) => {
 });
 
 // === 2. POST: Tải file lên Cloudinary ===
+// ... (Hàm này giữ nguyên vì nó đã sử dụng storage có logic phân loại 'image'/'raw' mới)
 app.post('/upload', upload.single('file'), (req, res) => {
     if (!req.file) {
         return res.status(400).send('Không có file nào được tải lên.');
@@ -75,11 +98,22 @@ app.post('/upload', upload.single('file'), (req, res) => {
 });
 
 // === 3. DELETE: Xóa file khỏi Cloudinary ===
+// ... (Giữ nguyên)
 app.delete('/delete/:fileName', async (req, res) => {
+    // Logic delete cần biết resource_type, nhưng vì public_id đã lưu trong Flutter 
+    // nên chúng ta sẽ dựa vào đó. Nếu file không phải ảnh, cần xóa 2 lần (raw, image). 
+    // Đơn giản nhất là sử dụng hàm destroy để Cloudinary tự xác định.
+
     const publicId = req.params.fileName; 
 
     try {
-        const result = await cloudinary.uploader.destroy(publicId);
+        // Thử xóa như ảnh
+        let result = await cloudinary.uploader.destroy(publicId, { resource_type: 'image' });
+
+        if (result.result !== 'ok') {
+            // Thử xóa như raw (tài liệu) nếu xóa ảnh không thành công
+            result = await cloudinary.uploader.destroy(publicId, { resource_type: 'raw' });
+        }
 
         if (result.result === 'ok') {
             res.status(200).json({ message: `Đã xóa file ${publicId}` });
@@ -91,6 +125,7 @@ app.delete('/delete/:fileName', async (req, res) => {
     }
 });
 
+
 app.listen(PORT, () => {
-    console.log(`Server Backend Cloudinary đang chạy tại cổng ${PORT}`);
+    console.log(`Server Backend Cloudinary đang chạy tại cổng ${10000}`);
 });
