@@ -7,10 +7,9 @@ const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
 
 const app = express();
-// Sử dụng cổng của Render hoặc mặc định là 3000
 const PORT = process.env.PORT || 3000; 
 
-// --- CẤU HÌNH CLOUDINARY (LẤY TỪ BIẾN MÔI TRƯỜNG CỦA RENDER) ---
+// --- CẤU HÌNH CLOUDINARY (SỬ DỤNG BIẾN MÔI TRƯỜNG) ---
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
@@ -20,7 +19,7 @@ cloudinary.config({
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
-        folder: 'flutter_file_manager', // Thư mục lưu trữ trên Cloudinary
+        folder: 'flutter_file_manager', 
         resource_type: 'auto', 
         public_id: (req, file) => Date.now().toString() + '-' + file.originalname.split('.')[0]
     },
@@ -41,8 +40,8 @@ app.get('/list', async (req, res) => {
         });
 
         const fileList = result.resources.map(resource => ({
-            name: resource.public_id, // public_id là tên file đầy đủ (bao gồm folder)
-            size: resource.bytes,
+            name: resource.public_id, 
+            size: resource.bytes, // Đảm bảo trả về kiểu number
             url: resource.secure_url, 
             uploadDate: resource.created_at.split('T')[0]
         }));
@@ -60,9 +59,9 @@ app.post('/upload', upload.single('file'), (req, res) => {
         return res.status(400).send('Không có file nào được tải lên.');
     }
     
+    // Server trả về đủ thông tin cần thiết
     res.status(201).json({ 
         message: `Tải file ${req.file.filename} lên Cloudinary thành công!`,
-        // Dữ liệu file mới trả về để Flutter cập nhật danh sách
         file: {
             name: req.file.filename,
             size: req.file.size,
@@ -74,7 +73,6 @@ app.post('/upload', upload.single('file'), (req, res) => {
 
 // === 3. DELETE: Xóa file khỏi Cloudinary ===
 app.delete('/delete/:fileName', async (req, res) => {
-    // fileName là public_id (bao gồm cả folder prefix)
     const publicId = req.params.fileName; 
 
     try {
@@ -86,12 +84,9 @@ app.delete('/delete/:fileName', async (req, res) => {
             res.status(500).json({ error: `Lỗi xóa file: ${result.result}` });
         }
     } catch (err) {
-        res.status(500).json({ error: 'Không thể xóa file trên Cloudinary.' });
+        res.status(500).json({ error: 'Không thể xóa file.' });
     }
 });
-
-// Lưu ý: Chức năng chỉnh sửa file văn bản (.txt) trực tiếp đã được loại bỏ 
-// vì nó đòi hỏi logic ghi đè phức tạp trên Cloudinary.
 
 app.listen(PORT, () => {
     console.log(`Server Backend Cloudinary đang chạy tại cổng ${PORT}`);
