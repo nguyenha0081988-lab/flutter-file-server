@@ -1,4 +1,4 @@
-// E:\du an\Flutter\file_manager_app\backend\server.js
+// E:\du an\Flutter\file_manager_app\backend\server.js (Bản sửa lỗi cuối)
 
 const express = require('express');
 const cors = require('cors');
@@ -30,17 +30,19 @@ const upload = multer({ storage: storage });
 app.use(cors());
 app.use(express.text()); 
 
-// === 1. GET: Lấy danh sách file (ĐÃ SỬA LỖI 404) ===
+// === 1. GET: Lấy danh sách file (ĐÃ SỬA LỖI QUERY CUỐI CÙNG) ===
 app.get('/list', async (req, res) => {
     try {
-        // CHỈ DÙNG type: 'upload' và prefix để truy vấn. 
-        // Đã bỏ tham số 'resource_type: all' gây lỗi 404.
+        // Truy vấn Cloudinary để lấy danh sách tài nguyên
         const result = await cloudinary.api.resources({
             type: 'upload', 
             prefix: 'flutter_file_manager/',
             max_results: 100
         });
-
+        
+        // Logs này sẽ hiển thị số lượng file tìm thấy
+        console.log(`Cloudinary found ${result.resources.length} files.`); 
+        
         const fileList = result.resources.map(resource => ({
             name: resource.public_id, 
             size: resource.bytes, 
