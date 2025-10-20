@@ -30,18 +30,20 @@ const upload = multer({ storage: storage });
 app.use(cors());
 app.use(express.text()); 
 
-// === 1. GET: Lấy danh sách file ===
+// === 1. GET: Lấy danh sách file (ĐÃ SỬA LỖI TRUY VẤN) ===
 app.get('/list', async (req, res) => {
     try {
+        // THAY ĐỔI: Sử dụng resource_type: 'all' để lấy tất cả các loại file
         const result = await cloudinary.api.resources({
             type: 'upload', 
             prefix: 'flutter_file_manager/',
-            max_results: 50
+            resource_type: 'all', 
+            max_results: 100
         });
 
         const fileList = result.resources.map(resource => ({
             name: resource.public_id, 
-            size: resource.bytes, // Đảm bảo trả về kiểu number
+            size: resource.bytes, 
             url: resource.secure_url, 
             uploadDate: resource.created_at.split('T')[0]
         }));
@@ -59,7 +61,6 @@ app.post('/upload', upload.single('file'), (req, res) => {
         return res.status(400).send('Không có file nào được tải lên.');
     }
     
-    // Server trả về đủ thông tin cần thiết
     res.status(201).json({ 
         message: `Tải file ${req.file.filename} lên Cloudinary thành công!`,
         file: {
