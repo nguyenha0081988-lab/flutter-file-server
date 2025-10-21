@@ -1,9 +1,8 @@
-// E:\du an\Flutter\file_manager_app\backend\server.js
+// E:\du an\Flutter\file_manager_app\backend\server.js (ĐÃ SỬA LỖI XÓA FILE CUỐI CÙNG)
 
 const express = require('express');
 const cors = require('cors');
 const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
 
 const app = express();
@@ -22,10 +21,12 @@ const CLOUDINARY_FOLDER = 'flutter_file_manager';
 app.use(cors());
 app.use(express.text()); 
 
-// === 1. GET: Lấy danh sách file (Truy vấn 2 lần) ===
+// === 1. GET: Lấy danh sách file ===
 app.get('/list', async (req, res) => {
     try {
         const prefix = CLOUDINARY_FOLDER + '/';
+        
+        // Truy vấn cả file 'raw' và 'image'
         const rawFilesPromise = cloudinary.api.resources({ type: 'upload', prefix: prefix, resource_type: 'raw', max_results: 50 });
         const imageFilesPromise = cloudinary.api.resources({ type: 'upload', prefix: prefix, resource_type: 'image', max_results: 50 });
 
@@ -56,7 +57,6 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     const resource_type = req.file.mimetype.startsWith('image/') ? 'image' : 'raw';
     
     try {
-        // Sử dụng upload_stream để xử lý file từ buffer của Multer
         await cloudinary.uploader.upload_stream(
             { 
                 folder: CLOUDINARY_FOLDER,
@@ -82,21 +82,27 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     }
 });
 
-// === 3. DELETE: Xóa file khỏi Cloudinary ===
+// === 3. DELETE: Xóa file khỏi Cloudinary (ĐÃ SỬA LỖI MÃ HÓA URL) ===
 app.delete('/delete/:fileName', async (req, res) => {
-    const publicId = req.params.fileName; 
+    // QUAN TRỌNG: Giải mã URL để xử lý ký tự đặc biệt/tiếng Việt
+    const publicId = decodeURIComponent(req.params.fileName); 
+
     try {
+        // Thử xóa 'image' trước, sau đó 'raw'
         let result = await cloudinary.uploader.destroy(publicId, { resource_type: 'image' });
         if (result.result !== 'ok') {
             result = await cloudinary.uploader.destroy(publicId, { resource_type: 'raw' });
         }
+        
         if (result.result === 'ok') {
             res.status(200).json({ message: `Đã xóa file ${publicId}` });
         } else {
-            res.status(500).json({ error: `Lỗi xóa file: ${result.result}` });
+            console.error('Cloudinary Delete Error:', result);
+            res.status(500).json({ error: `Không tìm thấy file trên Cloudinary hoặc lỗi: ${result.result}` });
         }
     } catch (err) {
-        res.status(500).json({ error: 'Không thể xóa file.' });
+        console.error('Lỗi Xóa Server:', err);
+        res.status(500).json({ error: 'Lỗi máy chủ khi thực hiện xóa.' });
     }
 });
 
