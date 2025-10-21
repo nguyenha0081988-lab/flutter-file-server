@@ -25,7 +25,6 @@ app.use(express.text());
 app.get('/list', async (req, res) => {
     try {
         const prefix = CLOUDINARY_FOLDER + '/';
-        
         const rawFilesPromise = cloudinary.api.resources({ type: 'upload', prefix: prefix, resource_type: 'raw', max_results: 50 });
         const imageFilesPromise = cloudinary.api.resources({ type: 'upload', prefix: prefix, resource_type: 'image', max_results: 50 });
 
@@ -83,7 +82,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
 // === 3. DELETE: Xóa file khỏi Cloudinary (ĐÃ SỬA LỖI MÃ HÓA URL DỨT ĐIỂM) ===
 app.delete('/delete/:fileName', async (req, res) => {
-    // QUAN TRỌNG: SỬ DỤNG decodeURIComponent MỘT LẦN (Sửa lỗi mã hóa kép)
+    // QUAN TRỌNG: Giải mã URL để xử lý ký tự đặc biệt/tiếng Việt
     const publicId = decodeURIComponent(req.params.fileName); 
 
     try {
@@ -96,7 +95,6 @@ app.delete('/delete/:fileName', async (req, res) => {
         if (result.result === 'ok') {
             res.status(200).json({ message: `Đã xóa file ${publicId}` });
         } else {
-            // Log lỗi chi tiết để debug
             console.error('Cloudinary Delete Error:', result);
             res.status(500).json({ error: `Không tìm thấy file trên Cloudinary hoặc lỗi: ${result.result}` });
         }
