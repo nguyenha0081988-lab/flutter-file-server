@@ -1,4 +1,4 @@
-// server.js (FIXED: Xử lý lỗi Exception an toàn hơn)
+// server.js (FIX LỖI PUBLIC_ID BỊ LẶP)
 
 const express = require('express');
 const cors = require('cors');
@@ -24,13 +24,23 @@ const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
         folder: (req, file) => {
+            // Folder được lấy từ req.body.folder
             return req.body.folder || ROOT_FOLDER; 
         }, 
         resource_type: 'auto', 
         public_id: (req, file) => {
             const currentFolder = req.body.folder || ROOT_FOLDER;
+            
+            // Lấy tên file không có đuôi mở rộng
             const parts = file.originalname.split('.');
             const baseName = parts.slice(0, -1).join('.');
+
+            // FIXED LỖI LẶP: Nếu thư mục hiện tại là thư mục gốc, chỉ dùng baseName
+            if (currentFolder === ROOT_FOLDER) {
+                return `${ROOT_FOLDER}/${baseName}`;
+            }
+
+            // Nếu không phải thư mục gốc, sử dụng full path
             return `${currentFolder}/${baseName}`;
         }
     },
@@ -54,6 +64,7 @@ app.get('/list', async (req, res) => {
         currentFolder = currentFolder.substring(1);
     }
     
+    // Tiền tố cho API resources
     const prefix = currentFolder === ROOT_FOLDER ? '' : `${currentFolder}/`; 
 
     try {
@@ -72,6 +83,7 @@ app.get('/list', async (req, res) => {
         }
         
         const combinedList = [];
+        const currentFolderIsRoot = currentFolder === ROOT_FOLDER;
 
         // 1. Thêm các thư mục con
         for (const folder of folderResult.folders) {
@@ -89,7 +101,7 @@ app.get('/list', async (req, res) => {
         for (const resource of fileResult.resources) {
              combinedList.push({
                 name: resource.public_id, 
-                basename: resource.filename, 
+                basename: resource.filename, // Gửi về null nếu không có
                 size: resource.bytes,
                 url: resource.secure_url, 
                 uploadDate: resource.created_at.split('T')[0],
@@ -113,26 +125,21 @@ app.get('/list', async (req, res) => {
     }
 });
 
-// === 2. POST: Tải file lên Cloudinary (SỬ DỤNG MIDDLEWARE MULTER) ===
+// === 2. POST: Tải file lên Cloudinary (DÙNG MIDDLEWARE MULTER) ===
 app.post('/upload', (req, res, next) => {
     upload.single('file')(req, res, function (err) {
         if (err instanceof multer.MulterError) {
-             // Lỗi của Multer (ví dụ: kích thước file quá lớn)
              console.error('Multer Error:', err);
              return res.status(500).json({ error: `Lỗi Multer: ${err.message}` });
         } else if (err) {
-            // Lỗi không xác định
             console.error('Lỗi Upload BẤT NGỜ:', err);
-            // Cố gắng trả về thông tin lỗi chi tiết hơn
             return res.status(500).json({ error: `Lỗi Server Nội bộ: ${err.message || JSON.stringify(err)}` });
         }
         
-        // Kiểm tra file sau khi Multer đã xử lý
         if (!req.file) {
             return res.status(400).json({ error: 'Không có file nào được tải lên.' });
         }
         
-        // Trả về thành công
         res.status(201).json({ 
             message: `Tải/Ghi đè file ${req.file.originalname} thành công!`,
             file: {
@@ -145,7 +152,6 @@ app.post('/upload', (req, res, next) => {
     });
 });
 
-// ... (Các hàm khác giữ nguyên logic)
 // === 3. POST: Tạo Thư mục Mới ===
 app.post('/create-folder', async (req, res) => {
     const { folderPath } = req.body; 
