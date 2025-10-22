@@ -81,9 +81,10 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 });
 
 // === 3. DELETE: Xóa file khỏi Cloudinary (ĐÃ SỬA LỖI ROUTING VÀ MÃ HÓA URL DỨT ĐIỂM) ===
-// Dùng wildcard '*' và lấy tham số bằng req.params[0]
+// Dùng cú pháp wildcard an toàn nhất: '/delete/*'
 app.delete('/delete/*', async (req, res) => {
     // Lấy toàn bộ chuỗi sau /delete/ (ví dụ: flutter_file_manager/123-ten_file)
+    // Access tham số wildcard qua req.params[0]
     const encodedId = req.params[0]; 
     
     // Giải mã URL để xử lý ký tự đặc biệt/tiếng Việt
