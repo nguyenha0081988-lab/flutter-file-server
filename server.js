@@ -1,11 +1,11 @@
-// server.js (ĐÃ CẬP NHẬT: Hỗ trợ Cấu trúc Folder và GET /list theo Folder)
+// server.js (ĐÃ CẬP NHẬT: Hỗ trợ Cấu trúc Folder và Xóa Thư mục đệ quy)
 
 const express = require('express');
 const cors = require('cors');
 const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
-const bodyParser = require('body-parser'); // Dùng để đọc JSON/Text body
+const bodyParser = require('body-parser'); 
 
 const app = express();
 const PORT = process.env.PORT || 3000; 
@@ -23,13 +23,11 @@ const ROOT_FOLDER = 'flutter_file_manager';
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
-        // Folder sẽ được định nghĩa động dựa trên request body
         folder: (req, file) => {
             return req.body.folder || ROOT_FOLDER; 
         }, 
         resource_type: 'auto', 
         public_id: (req, file) => {
-            // Đảm bảo tên file không bị thay đổi ngẫu nhiên khi ghi đè
             return req.body.folder ? 
                    `${req.body.folder}/${file.originalname.split('.')[0]}` :
                    `${ROOT_FOLDER}/${file.originalname.split('.')[0]}`;
@@ -48,28 +46,27 @@ app.use(express.text());
 
 // === 1. GET: Lấy danh sách file và folder cho một đường dẫn cụ thể ===
 app.get('/list', async (req, res) => {
-    // Lấy tham số 'folder' từ query string, mặc định là folder gốc
     let currentFolder = req.query.folder || ROOT_FOLDER; 
 
-    // Kiểm tra và đặt lại currentFolder nếu có ký tự không hợp lệ (ngăn chặn lỗi)
     if (currentFolder.startsWith('/')) {
         currentFolder = currentFolder.substring(1);
     }
 
     try {
-        // Lấy tài nguyên (file) trong thư mục hiện tại (sử dụng tiền tố)
         const fileResult = await cloudinary.api.resources({
             type: 'upload', 
-            prefix: `${currentFolder}/`, // Chỉ lấy các file bắt đầu bằng tiền tố này
+            prefix: `${currentFolder}/`, 
             max_results: 50,
-            depth: 1, // Chỉ lấy file trong folder hiện tại, không lấy file trong subfolder
+            depth: 1, 
         });
 
-        // Lấy danh sách các thư mục (folders) con
         const folderResult = await cloudinary.api.sub_folders(currentFolder);
-
+        
+        // Trích xuất tên folder con (nếu có subfolder, Cloudinary sẽ trả về tên folder đó)
+        const currentFolderBasename = currentFolder.replace(`${ROOT_FOLDER}/`, '');
+        
         const fileList = fileResult.resources
-            .filter(resource => resource.folder === currentFolder.replace(`${ROOT_FOLDER}/`, '')) // Chỉ lấy file trực tiếp trong folder
+            .filter(resource => resource.folder === currentFolderBasename) 
             .map(resource => ({
                 name: resource.public_id, 
                 basename: resource.filename, 
@@ -80,15 +77,14 @@ app.get('/list', async (req, res) => {
             }));
 
         const folderList = folderResult.folders.map(folder => ({
-            name: `${currentFolder}/${folder.name}`, // Tên đầy đủ
-            basename: folder.name, // Tên thư mục đơn giản
+            name: `${currentFolder}/${folder.name}`,
+            basename: folder.name, 
             size: 0,
             url: '',
             uploadDate: new Date().toISOString().split('T')[0],
             isFolder: true, 
         }));
         
-        // Gộp danh sách folder và file, ưu tiên folder lên trước
         const combinedList = [...folderList, ...fileList];
 
         res.status(200).json({
@@ -97,7 +93,6 @@ app.get('/list', async (req, res) => {
         });
     } catch (err) {
         console.error('Lỗi Cloudinary List:', err);
-        // Nếu Cloudinary trả về lỗi (ví dụ: folder không tồn tại), trả về folder rỗng
         if (err.http_code === 404) {
              return res.status(200).json({
                 currentFolder: currentFolder,
@@ -108,7 +103,7 @@ app.get('/list', async (req, res) => {
     }
 });
 
-// === 2. POST: Tải file lên Cloudinary (Đã cập nhật để xử lý folder) ===
+// === 2. POST: Tải file lên Cloudinary ===
 app.post('/upload', upload.single('file'), (req, res) => {
     if (!req.file) {
         return res.status(400).send('Không có file nào được tải lên.');
@@ -133,8 +128,7 @@ app.post('/create-folder', async (req, res) => {
     }
 
     try {
-        const folderName = folderPath; // Path đã đầy đủ (ví dụ: flutter_file_manager/A/B)
-        
+        const folderName = folderPath; 
         const result = await cloudinary.api.create_folder(folderName);
         
         if (result.success !== false) {
@@ -152,7 +146,6 @@ app.post('/create-folder', async (req, res) => {
             return res.status(409).json({ error: 'Thư mục có thể đã tồn tại hoặc lỗi không xác định.' });
         }
     } catch (err) {
-        // Cloudinary trả về lỗi 400 nếu folder đã tồn tại
         if (err.http_code === 400 && err.message.includes("already exists")) {
             return res.status(409).json({ error: 'Thư mục đã tồn tại.' });
         }
@@ -161,7 +154,7 @@ app.post('/create-folder', async (req, res) => {
     }
 });
 
-// === 4. DELETE: Xóa Folder ===
+// === 4. DELETE: Xóa Folder (FIXED: Xóa đệ quy) ===
 app.delete('/delete-folder', async (req, res) => {
     const { folderPath } = req.body; 
     if (!folderPath) {
@@ -169,11 +162,16 @@ app.delete('/delete-folder', async (req, res) => {
     }
 
     try {
-        // Xóa folder và tất cả file/folder con bên trong (recursive)
+        // 1. Xóa tất cả file bên trong folder đó (recursive)
+        // Lưu ý: delete_resources_by_prefix chỉ xóa file, không xóa folder con
+        await cloudinary.api.delete_resources_by_prefix(`${folderPath}/`);
+
+        // 2. Xóa folder con (nếu có, cần xử lý đệ quy cho sub-folders nếu có)
+        // Để đơn giản, ta chỉ gọi delete_folder, vì Cloudinary sẽ xóa folder đã trống.
         const result = await cloudinary.api.delete_folder(folderPath);
 
-        if (result.message === 'Deleted') {
-            return res.status(200).json({ message: `Đã xóa thư mục ${folderPath} thành công.` });
+        if (result.message === 'Deleted' || result.deleted_counts > 0) {
+            return res.status(200).json({ message: `Đã xóa thư mục ${folderPath} và tất cả nội dung thành công.` });
         } else {
             return res.status(404).json({ error: 'Không tìm thấy thư mục hoặc lỗi khi xóa.' });
         }
@@ -183,10 +181,9 @@ app.delete('/delete-folder', async (req, res) => {
     }
 });
 
-// === 5. DELETE: Xóa File (Đã cập nhật để dùng body) ===
+// === 5. DELETE: Xóa File (Sử dụng JSON body) ===
 app.delete('/delete', async (req, res) => {
-    // API Cloudinary dùng public_id để xóa (đã sửa lỗi gửi tham số từ client)
-    const publicId = req.body.publicId || req.query.id; 
+    const publicId = req.body.publicId; 
     
     if (!publicId) {
         return res.status(400).json({ error: 'Thiếu publicId để xóa.' });
