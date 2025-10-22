@@ -1,4 +1,4 @@
-// server.js (FIX LOGIC DỨT ĐIỂM: Sửa lỗi public_id bị lặp)
+// server.js (FIX CUỐI CÙNG: Sửa lỗi public_id bị lặp và hiển thị file mới)
 
 const express = require('express');
 const cors = require('cors');
@@ -24,11 +24,10 @@ const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
         folder: (req, file) => {
-            // Folder được lấy từ req.body.folder (gồm cả ROOT_FOLDER, ví dụ: 'flutter_file_manager/02')
+            // Folder được lấy từ req.body.folder (folder đầy đủ)
             return req.body.folder || ROOT_FOLDER; 
         }, 
         resource_type: 'auto', 
-        // FIXED LOGIC LẶP Ở ĐÂY
         public_id: (req, file) => {
             const currentFolder = req.body.folder || ROOT_FOLDER;
             
@@ -36,7 +35,7 @@ const storage = new CloudinaryStorage({
             const parts = file.originalname.split('.');
             const baseName = parts.slice(0, -1).join('.');
 
-            // Đảm bảo publicId luôn là {folder_path}/{basename}
+            // FIXED LỖI LẶP: publicId chỉ cần là {folder}/{basename}. Cloudinary sẽ tự xử lý.
             return `${currentFolder}/${baseName}`;
         }
     },
@@ -60,14 +59,16 @@ app.get('/list', async (req, res) => {
         currentFolder = currentFolder.substring(1);
     }
     
+    // Tiền tố cho API resources
     const prefix = currentFolder === ROOT_FOLDER ? '' : `${currentFolder}/`; 
 
     try {
+        // LẤY FILE VÀ FOLDER CON (NON-RECURSIVE)
         const fileResult = await cloudinary.api.resources({
             type: 'upload', 
             prefix: prefix, 
             max_results: 500, 
-            depth: 1, 
+            depth: 1, // Lấy file ở cấp hiện tại
         });
 
         let folderResult = { folders: [] };
@@ -95,7 +96,7 @@ app.get('/list', async (req, res) => {
         for (const resource of fileResult.resources) {
              combinedList.push({
                 name: resource.public_id, 
-                basename: resource.filename, 
+                basename: resource.filename, // Gửi về null nếu không có
                 size: resource.bytes,
                 url: resource.secure_url, 
                 uploadDate: resource.created_at.split('T')[0],
