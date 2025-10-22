@@ -1,4 +1,4 @@
-// E:\du an\Flutter\file_manager_app\backend\server.js (ĐÃ SỬA LỖI ROUTING EXPRESS DỨT ĐIỂM)
+// server.js (ĐÃ SỬA LỖI KHỞI ĐỘNG ROUTING DỨT ĐIỂM)
 
 const express = require('express');
 const cors = require('cors');
@@ -58,6 +58,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
         await cloudinary.uploader.upload_stream(
             { 
                 folder: CLOUDINARY_FOLDER,
+                // Lấy phần tên không có đuôi mở rộng
                 public_id: file_name.split('.')[0], 
                 resource_type: resource_type,
                 overwrite: true, 
@@ -80,10 +81,10 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     }
 });
 
-// === 3. DELETE: Xóa file khỏi Cloudinary (ĐÃ SỬA LỖI ROUTING VÀ MÃ HÓA URL DỨT ĐIỂM) ===
-// Sử dụng cú pháp an toàn nhất để bắt toàn bộ đường dẫn tên file
+// === 3. DELETE: Xóa file khỏi Cloudinary (SỬA LỖI KHỞI ĐỘNG DỨT ĐIỂM) ===
+// Sử dụng cú pháp wildcard an toàn nhất: '/delete/*'
 app.delete('/delete/*', async (req, res) => {
-    // Lấy toàn bộ chuỗi sau /delete/ (ví dụ: flutter_file_manager/123-ten_file)
+    // Lấy toàn bộ chuỗi sau /delete/ (tham số đầu tiên của wildcard)
     const encodedId = req.params[0]; 
     
     // Giải mã URL để xử lý ký tự đặc biệt/tiếng Việt
