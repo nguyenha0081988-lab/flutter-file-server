@@ -1,4 +1,4 @@
-// server.js (FIX CUỐI CÙNG: Đơn giản hóa logic lọc file bằng depth=1)
+// server.js (FIX CUỐI CÙNG: Sửa lỗi Internal Server Error)
 
 const express = require('express');
 const cors = require('cors');
@@ -24,26 +24,34 @@ const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
         folder: (req, file) => {
+            // Folder được lấy từ req.body.folder (được gửi từ Flutter)
             return req.body.folder || ROOT_FOLDER; 
         }, 
         resource_type: 'auto', 
         public_id: (req, file) => {
-            const baseName = file.originalname.split('.').slice(0, -1).join('.');
-            return req.body.folder ? 
-                   `${req.body.folder}/${baseName}` :
-                   `${ROOT_FOLDER}/${baseName}`;
+            // FIXED: Đảm bảo baseName không bị lỗi khi xử lý tên file
+            const parts = file.originalname.split('.');
+            const extension = parts.length > 1 ? parts.pop() : '';
+            const baseName = parts.join('.');
+
+            const currentFolder = req.body.folder || ROOT_FOLDER;
+
+            return `${currentFolder}/${baseName}`;
         }
     },
     overwrite: true,
 });
 
-const upload = multer({ storage: storage });
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 10 * 1024 * 1024 } 
+});
 
 app.use(cors());
 app.use(bodyParser.json()); 
 app.use(express.text()); 
 
-// === 1. GET: Lấy danh sách file và folder (FIXED LỌC FILE) ===
+// === 1. GET: Lấy danh sách file và folder ===
 app.get('/list', async (req, res) => {
     let currentFolder = req.query.folder || ROOT_FOLDER; 
 
@@ -51,17 +59,15 @@ app.get('/list', async (req, res) => {
         currentFolder = currentFolder.substring(1);
     }
     
-    // Đảm bảo prefix luôn kết thúc bằng '/' (trừ trường hợp ROOT_FOLDER)
     const prefix = currentFolder === ROOT_FOLDER ? '' : `${currentFolder}/`; 
 
     try {
-        // LẤY FILE TRỰC TIẾP TRONG THƯ MỤC HIỆN TẠI (NON-RECURSIVE)
+        // LẤY FILE VÀ FOLDER CON (NON-RECURSIVE)
         const fileResult = await cloudinary.api.resources({
             type: 'upload', 
             prefix: prefix, 
             max_results: 500, 
-            // SỬA LỖI: Dùng depth = 1 để chỉ lấy file ở cấp hiện tại.
-            depth: 1, 
+            depth: 1, // Lấy file ở cấp hiện tại
         });
 
         // Lấy danh sách các thư mục (folders) con
@@ -86,9 +92,10 @@ app.get('/list', async (req, res) => {
             });
         }
         
-        // 2. Thêm các file trực tiếp (Dữ liệu đã được API lọc sẵn nhờ depth: 1)
+        // 2. Thêm các file trực tiếp
         for (const resource of fileResult.resources) {
-            combinedList.push({
+            // FIX HIỂN THỊ FILE CŨ: Chỉ cần lấy publicId vì depth=1 đã lọc non-recursive.
+             combinedList.push({
                 name: resource.public_id, 
                 basename: resource.filename, 
                 size: resource.bytes,
