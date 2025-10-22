@@ -1,4 +1,4 @@
-// server.js (ĐÃ SỬA LỖI: Lọc file, Xóa thư mục, Tên folder có ký tự đặc biệt)
+// server.js (ĐÃ SỬA LỖI DỨT ĐIỂM: Lọc file, Xóa thư mục, Tên folder)
 
 const express = require('express');
 const cors = require('cors');
@@ -6,7 +6,6 @@ const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
 const bodyParser = require('body-parser'); 
-const { URLSearchParams } = require('url'); // Bổ sung để xử lý URL encoding
 
 const app = express();
 const PORT = process.env.PORT || 3000; 
@@ -29,7 +28,6 @@ const storage = new CloudinaryStorage({
         }, 
         resource_type: 'auto', 
         public_id: (req, file) => {
-            // Giữ tên file gốc (không bao gồm đuôi) và thêm tiền tố folder
             const baseName = file.originalname.split('.').slice(0, -1).join('.');
             return req.body.folder ? 
                    `${req.body.folder}/${baseName}` :
@@ -47,15 +45,12 @@ app.use(express.text());
 
 // --- HÀM HỖ TRỢ: LẤY TÊN FOLDER CUỐI CÙNG (CHÍNH XÁC) ---
 function getCurrentFolderBasename(fullPath) {
-    // Nếu là ROOT_FOLDER, trả về null (hoặc chuỗi rỗng)
     if (fullPath === ROOT_FOLDER) return null;
     
-    // Xóa tiền tố ROOT_FOLDER/ và trả về phần còn lại
     const relativePath = fullPath.startsWith(`${ROOT_FOLDER}/`) 
         ? fullPath.substring(ROOT_FOLDER.length + 1)
         : fullPath;
 
-    // Trả về phần tử cuối cùng trong đường dẫn (ví dụ: '01 Thư mục')
     return relativePath.split('/').pop();
 }
 
@@ -67,28 +62,30 @@ app.get('/list', async (req, res) => {
     if (currentFolder.startsWith('/')) {
         currentFolder = currentFolder.substring(1);
     }
+    
+    // Cloudinary cần folder không có ký tự đặc biệt (chủ yếu là xử lý khoảng trắng trong tên folder)
+    const sanitizedFolder = currentFolder.replace(/ /g, '_'); 
 
     try {
+        // LẤY TẤT CẢ TÀI NGUYÊN BẮT ĐẦU BẰNG TIỀN TỐ NÀY (RECURSIVE)
         const fileResult = await cloudinary.api.resources({
             type: 'upload', 
             prefix: `${currentFolder}/`, 
             max_results: 50,
-            depth: 1, 
         });
 
+        // Lấy danh sách các thư mục (folders) con
         const folderResult = await cloudinary.api.sub_folders(currentFolder);
         
-        // SỬA LỖI LỌC FILE: Lấy tên folder chính xác (có thể có khoảng trắng)
-        const expectedFolderName = getCurrentFolderBasename(currentFolder);
-
+        // SỬA LỖI LỌC FILE: Đảm bảo chỉ lấy file TRỰC TIẾP trong thư mục hiện tại
+        const expectedFolderName = currentFolder.replace(`${ROOT_FOLDER}/`, '');
+        const folderDepth = currentFolder.split('/').length;
+        
         const fileList = fileResult.resources
             .filter(resource => {
-                // Lọc để chỉ lấy file TRỰC TIẾP trong thư mục hiện tại
-                // Nếu là folder con của ROOT_FOLDER, resource.folder sẽ là tên folder đó.
-                if (currentFolder === ROOT_FOLDER) {
-                    return !resource.folder || resource.folder === '';
-                }
-                return resource.folder === expectedFolderName;
+                 // Kiểm tra nếu resource.public_id không chứa "/" ngoài tiền tố currentFolder
+                 const relativeId = resource.public_id.substring(currentFolder.length + 1);
+                 return relativeId.indexOf('/') === -1;
             })
             .map(resource => ({
                 name: resource.public_id, 
@@ -149,10 +146,12 @@ app.post('/create-folder', async (req, res) => {
     if (!folderPath) {
         return res.status(400).json({ error: 'Thiếu đường dẫn thư mục.' });
     }
+    
+    // Mã hóa folderPath để xử lý ký tự đặc biệt (trừ dấu /)
+    const encodedFolderPath = folderPath.split('/').map(encodeURIComponent).join('/');
 
     try {
-        const folderName = folderPath; 
-        const result = await cloudinary.api.create_folder(folderName);
+        const result = await cloudinary.api.create_folder(encodedFolderPath);
         
         if (result.success !== false) {
             const basename = folderPath.split('/').pop();
@@ -184,25 +183,24 @@ app.delete('/delete-folder', async (req, res) => {
         return res.status(400).json({ error: 'Thiếu đường dẫn thư mục.' });
     }
     
-    // SỬA LỖI: Cloudinary yêu cầu đường dẫn được mã hóa URI (ví dụ: "01 Thư mục" thành "01%20Thư%20mục")
-    const encodedFolderPath = encodeURIComponent(folderPath).replace(/%2F/g, '/');
-
+    // Mã hóa folderPath để xử lý ký tự đặc biệt (trừ dấu /)
+    const encodedFolderPath = folderPath.split('/').map(encodeURIComponent).join('/');
 
     try {
-        // 1. Xóa tất cả file bên trong folder đó 
+        // 1. Xóa tất cả file bên trong folder đó (RECURSIVE)
         await cloudinary.api.delete_resources_by_prefix(`${encodedFolderPath}/`);
 
-        // 2. Xóa chính folder đó
+        // 2. Xóa folder đó
         const result = await cloudinary.api.delete_folder(encodedFolderPath);
 
         if (result.message === 'Deleted' || result.deleted_counts > 0) {
             return res.status(200).json({ message: `Đã xóa thư mục ${folderPath} và tất cả nội dung thành công.` });
         } else {
+            // Lỗi này giờ ít xảy ra hơn do đã xóa file bên trong
             return res.status(404).json({ error: 'Không tìm thấy thư mục hoặc lỗi khi xóa.' });
         }
     } catch (err) {
         console.error('Lỗi xóa thư mục:', err);
-        // Trả về lỗi 404 cho Flutter nếu server không tìm thấy
         if (err.http_code === 404) {
              return res.status(404).json({ error: 'Không tìm thấy thư mục hoặc lỗi khi xóa.' });
         }
