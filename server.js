@@ -1,4 +1,4 @@
-// server.js (FIX CUỐI CÙNG: Sửa lỗi Internal Server Error và Lọc file)
+// server.js (FIXED: Xử lý lỗi Exception an toàn hơn)
 
 const express = require('express');
 const cors = require('cors');
@@ -29,12 +29,8 @@ const storage = new CloudinaryStorage({
         resource_type: 'auto', 
         public_id: (req, file) => {
             const currentFolder = req.body.folder || ROOT_FOLDER;
-            
-            // Lấy tên file không có đuôi mở rộng
             const parts = file.originalname.split('.');
             const baseName = parts.slice(0, -1).join('.');
-
-            // FIXED: Đảm bảo publicId chỉ là {folder}/{basename}, không bị lặp lại.
             return `${currentFolder}/${baseName}`;
         }
     },
@@ -58,19 +54,16 @@ app.get('/list', async (req, res) => {
         currentFolder = currentFolder.substring(1);
     }
     
-    // Đảm bảo prefix chỉ là chuỗi rỗng nếu ở thư mục gốc
     const prefix = currentFolder === ROOT_FOLDER ? '' : `${currentFolder}/`; 
 
     try {
-        // LẤY FILE VÀ FOLDER CON (NON-RECURSIVE)
         const fileResult = await cloudinary.api.resources({
             type: 'upload', 
             prefix: prefix, 
             max_results: 500, 
-            depth: 1, // Lấy file ở cấp hiện tại
+            depth: 1, 
         });
 
-        // Lấy danh sách các thư mục (folders) con
         let folderResult = { folders: [] };
         try {
             folderResult = await cloudinary.api.sub_folders(currentFolder);
@@ -94,9 +87,9 @@ app.get('/list', async (req, res) => {
         
         // 2. Thêm các file trực tiếp
         for (const resource of fileResult.resources) {
-            combinedList.push({
+             combinedList.push({
                 name: resource.public_id, 
-                basename: resource.filename, // Gửi về null nếu không có
+                basename: resource.filename, 
                 size: resource.bytes,
                 url: resource.secure_url, 
                 uploadDate: resource.created_at.split('T')[0],
@@ -120,23 +113,39 @@ app.get('/list', async (req, res) => {
     }
 });
 
-// === 2. POST: Tải file lên Cloudinary (DÙNG MIDDLEWARE MULTER) ===
-app.post('/upload', upload.single('file'), (req, res) => {
-    if (!req.file) {
-        return res.status(400).send('Không có file nào được tải lên.');
-    }
-    
-    res.status(201).json({ 
-        message: `Tải/Ghi đè file ${req.file.originalname} thành công!`,
-        file: {
-            name: req.file.filename,
-            size: req.file.size,
-            url: req.file.path,
-            uploadDate: new Date().toISOString().split('T')[0]
+// === 2. POST: Tải file lên Cloudinary (SỬ DỤNG MIDDLEWARE MULTER) ===
+app.post('/upload', (req, res, next) => {
+    upload.single('file')(req, res, function (err) {
+        if (err instanceof multer.MulterError) {
+             // Lỗi của Multer (ví dụ: kích thước file quá lớn)
+             console.error('Multer Error:', err);
+             return res.status(500).json({ error: `Lỗi Multer: ${err.message}` });
+        } else if (err) {
+            // Lỗi không xác định
+            console.error('Lỗi Upload BẤT NGỜ:', err);
+            // Cố gắng trả về thông tin lỗi chi tiết hơn
+            return res.status(500).json({ error: `Lỗi Server Nội bộ: ${err.message || JSON.stringify(err)}` });
         }
+        
+        // Kiểm tra file sau khi Multer đã xử lý
+        if (!req.file) {
+            return res.status(400).json({ error: 'Không có file nào được tải lên.' });
+        }
+        
+        // Trả về thành công
+        res.status(201).json({ 
+            message: `Tải/Ghi đè file ${req.file.originalname} thành công!`,
+            file: {
+                name: req.file.filename,
+                size: req.file.size,
+                url: req.file.path,
+                uploadDate: new Date().toISOString().split('T')[0]
+            }
+        });
     });
 });
 
+// ... (Các hàm khác giữ nguyên logic)
 // === 3. POST: Tạo Thư mục Mới ===
 app.post('/create-folder', async (req, res) => {
     const { folderPath } = req.body; 
