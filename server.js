@@ -1,116 +1,210 @@
-// E:\du an\Flutter\file_manager_app\backend\server.js (ĐÃ SỬA LỖI KHỞI ĐỘNG ROUTING DỨT ĐIỂM)
+// server.js (ĐÃ CẬP NHẬT: Hỗ trợ Cấu trúc Folder và GET /list theo Folder)
 
 const express = require('express');
 const cors = require('cors');
 const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
+const bodyParser = require('body-parser'); // Dùng để đọc JSON/Text body
 
 const app = express();
 const PORT = process.env.PORT || 3000; 
 
-// --- CẤU HÌNH CLOUDINARY ---
+// --- CẤU HÌNH CLOUDINARY (LẤY TỪ BIẾN MÔI TRƯỜNG CỦA RENDER) ---
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-const upload = multer(); 
-const CLOUDINARY_FOLDER = 'flutter_file_manager';
+const ROOT_FOLDER = 'flutter_file_manager';
+
+// Cấu hình multer để lưu file vào Cloudinary
+const storage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        // Folder sẽ được định nghĩa động dựa trên request body
+        folder: (req, file) => {
+            return req.body.folder || ROOT_FOLDER; 
+        }, 
+        resource_type: 'auto', 
+        public_id: (req, file) => {
+            // Đảm bảo tên file không bị thay đổi ngẫu nhiên khi ghi đè
+            return req.body.folder ? 
+                   `${req.body.folder}/${file.originalname.split('.')[0]}` :
+                   `${ROOT_FOLDER}/${file.originalname.split('.')[0]}`;
+        }
+    },
+    overwrite: true,
+});
+
+const upload = multer({ storage: storage });
 
 app.use(cors());
+app.use(bodyParser.json()); // Dùng để đọc JSON body cho các request POST/DELETE
 app.use(express.text()); 
 
-// === 1. GET: Lấy danh sách file ===
+// --- CÁC API ĐÃ CẬP NHẬT/BỔ SUNG ---
+
+// === 1. GET: Lấy danh sách file và folder cho một đường dẫn cụ thể ===
 app.get('/list', async (req, res) => {
+    // Lấy tham số 'folder' từ query string, mặc định là folder gốc
+    let currentFolder = req.query.folder || ROOT_FOLDER; 
+
+    // Kiểm tra và đặt lại currentFolder nếu có ký tự không hợp lệ (ngăn chặn lỗi)
+    if (currentFolder.startsWith('/')) {
+        currentFolder = currentFolder.substring(1);
+    }
+
     try {
-        const prefix = CLOUDINARY_FOLDER + '/';
-        const rawFilesPromise = cloudinary.api.resources({ type: 'upload', prefix: prefix, resource_type: 'raw', max_results: 50 });
-        const imageFilesPromise = cloudinary.api.resources({ type: 'upload', prefix: prefix, resource_type: 'image', max_results: 50 });
+        // Lấy tài nguyên (file) trong thư mục hiện tại (sử dụng tiền tố)
+        const fileResult = await cloudinary.api.resources({
+            type: 'upload', 
+            prefix: `${currentFolder}/`, // Chỉ lấy các file bắt đầu bằng tiền tố này
+            max_results: 50,
+            depth: 1, // Chỉ lấy file trong folder hiện tại, không lấy file trong subfolder
+        });
 
-        const [rawResult, imageResult] = await Promise.all([rawFilesPromise, imageFilesPromise]);
-        const allResources = [...rawResult.resources, ...imageResult.resources];
-        
-        const fileList = allResources.map(resource => ({
-            name: resource.public_id, 
-            size: resource.bytes, 
-            url: resource.secure_url, 
-            uploadDate: resource.created_at.split('T')[0]
+        // Lấy danh sách các thư mục (folders) con
+        const folderResult = await cloudinary.api.sub_folders(currentFolder);
+
+        const fileList = fileResult.resources
+            .filter(resource => resource.folder === currentFolder.replace(`${ROOT_FOLDER}/`, '')) // Chỉ lấy file trực tiếp trong folder
+            .map(resource => ({
+                name: resource.public_id, 
+                basename: resource.filename, 
+                size: resource.bytes,
+                url: resource.secure_url, 
+                uploadDate: resource.created_at.split('T')[0],
+                isFolder: false, 
+            }));
+
+        const folderList = folderResult.folders.map(folder => ({
+            name: `${currentFolder}/${folder.name}`, // Tên đầy đủ
+            basename: folder.name, // Tên thư mục đơn giản
+            size: 0,
+            url: '',
+            uploadDate: new Date().toISOString().split('T')[0],
+            isFolder: true, 
         }));
+        
+        // Gộp danh sách folder và file, ưu tiên folder lên trước
+        const combinedList = [...folderList, ...fileList];
 
-        res.status(200).json(fileList);
+        res.status(200).json({
+            currentFolder: currentFolder,
+            items: combinedList
+        });
     } catch (err) {
         console.error('Lỗi Cloudinary List:', err);
-        res.status(500).json({ error: 'Không thể lấy danh sách file từ Cloudinary.' });
+        // Nếu Cloudinary trả về lỗi (ví dụ: folder không tồn tại), trả về folder rỗng
+        if (err.http_code === 404) {
+             return res.status(200).json({
+                currentFolder: currentFolder,
+                items: []
+            });
+        }
+        res.status(500).json({ error: 'Lỗi server khi lấy danh sách file/folder.' });
     }
 });
 
-// === 2. POST: Tải/Ghi đè file lên Cloudinary (Giữ nguyên) ===
-app.post('/upload', upload.single('file'), async (req, res) => {
+// === 2. POST: Tải file lên Cloudinary (Đã cập nhật để xử lý folder) ===
+app.post('/upload', upload.single('file'), (req, res) => {
     if (!req.file) {
         return res.status(400).send('Không có file nào được tải lên.');
     }
     
-    const file_name = req.file.originalname;
-    const resource_type = req.file.mimetype.startsWith('image/') ? 'image' : 'raw';
-    
-    try {
-        await cloudinary.uploader.upload_stream(
-            { 
-                folder: CLOUDINARY_FOLDER,
-                public_id: file_name.split('.')[0], 
-                resource_type: resource_type,
-                overwrite: true, 
-                invalidate: true 
-            },
-            (error, result) => {
-                if (error) {
-                    console.error('Upload Error:', error);
-                    return res.status(500).send('Lỗi khi ghi đè file lên Cloudinary.');
-                }
-                res.status(201).json({ 
-                    message: `Tải file ${file_name} lên thành công!`,
-                    url: result.secure_url 
-                });
-            }
-        ).end(req.file.buffer);
-
-    } catch (e) {
-        res.status(500).send('Lỗi máy chủ khi xử lý upload.');
-    }
+    res.status(201).json({ 
+        message: `Tải/Ghi đè file ${req.file.originalname} thành công!`,
+        file: {
+            name: req.file.filename,
+            size: req.file.size,
+            url: req.file.path,
+            uploadDate: new Date().toISOString().split('T')[0]
+        }
+    });
 });
 
-// === 3. DELETE: Xóa file khỏi Cloudinary (ĐÃ SỬA LỖI ROUTING VÀ MÃ HÓA URL DỨT ĐIỂM) ===
-// Route KHÔNG có tham số để tránh lỗi Express
-app.delete('/delete', async (req, res) => {
-    // Lấy tên file từ query string (req.query.id)
-    const publicId = req.query.id; 
-
-    // Kiểm tra file
-    if (!publicId) {
-         return res.status(400).json({ error: 'Thiếu tham số tên file (publicId).' });
+// === 3. POST: Tạo Thư mục Mới ===
+app.post('/create-folder', async (req, res) => {
+    const { folderPath } = req.body; 
+    if (!folderPath) {
+        return res.status(400).json({ error: 'Thiếu đường dẫn thư mục.' });
     }
 
     try {
-        console.log(`Attempting to delete Public ID: ${publicId}`);
-
-        // Thử xóa 'image' trước, sau đó 'raw'
-        let result = await cloudinary.uploader.destroy(publicId, { resource_type: 'image' });
-        if (result.result !== 'ok') {
-            result = await cloudinary.uploader.destroy(publicId, { resource_type: 'raw' });
-        }
+        const folderName = folderPath; // Path đã đầy đủ (ví dụ: flutter_file_manager/A/B)
         
-        if (result.result === 'ok') {
-            res.status(200).json({ message: `Đã xóa file ${publicId}` });
+        const result = await cloudinary.api.create_folder(folderName);
+        
+        if (result.success !== false) {
+            const basename = folderPath.split('/').pop();
+            const virtualFolder = {
+                name: folderPath,
+                basename: basename,
+                size: 0,
+                url: '',
+                uploadDate: new Date().toISOString().split('T')[0],
+                isFolder: true
+            };
+            return res.status(201).json({ message: `Đã tạo thư mục ${basename} thành công.`, folder: virtualFolder });
         } else {
-            console.error('Cloudinary Delete Error:', result);
-            res.status(500).json({ error: `Không tìm thấy file trên Cloudinary hoặc lỗi: ${result.result}` });
+            return res.status(409).json({ error: 'Thư mục có thể đã tồn tại hoặc lỗi không xác định.' });
         }
     } catch (err) {
-        console.error('Lỗi Xóa Server:', err);
-        res.status(500).json({ error: 'Lỗi máy chủ khi thực hiện xóa.' });
+        // Cloudinary trả về lỗi 400 nếu folder đã tồn tại
+        if (err.http_code === 400 && err.message.includes("already exists")) {
+            return res.status(409).json({ error: 'Thư mục đã tồn tại.' });
+        }
+        console.error('Lỗi tạo thư mục:', err);
+        return res.status(500).json({ error: 'Lỗi server khi tạo thư mục.' });
     }
 });
+
+// === 4. DELETE: Xóa Folder ===
+app.delete('/delete-folder', async (req, res) => {
+    const { folderPath } = req.body; 
+    if (!folderPath) {
+        return res.status(400).json({ error: 'Thiếu đường dẫn thư mục.' });
+    }
+
+    try {
+        // Xóa folder và tất cả file/folder con bên trong (recursive)
+        const result = await cloudinary.api.delete_folder(folderPath);
+
+        if (result.message === 'Deleted') {
+            return res.status(200).json({ message: `Đã xóa thư mục ${folderPath} thành công.` });
+        } else {
+            return res.status(404).json({ error: 'Không tìm thấy thư mục hoặc lỗi khi xóa.' });
+        }
+    } catch (err) {
+        console.error('Lỗi xóa thư mục:', err);
+        return res.status(500).json({ error: 'Lỗi server khi xóa thư mục.' });
+    }
+});
+
+// === 5. DELETE: Xóa File (Đã cập nhật để dùng body) ===
+app.delete('/delete', async (req, res) => {
+    // API Cloudinary dùng public_id để xóa (đã sửa lỗi gửi tham số từ client)
+    const publicId = req.body.publicId || req.query.id; 
+    
+    if (!publicId) {
+        return res.status(400).json({ error: 'Thiếu publicId để xóa.' });
+    }
+    
+    try {
+        const result = await cloudinary.uploader.destroy(publicId);
+
+        if (result.result === 'ok') {
+            return res.status(200).json({ message: `Đã xóa file ${publicId}` });
+        } else {
+            return res.status(500).json({ error: `Lỗi xóa file: ${result.result}` });
+        }
+    } catch (err) {
+        return res.status(500).json({ error: 'Lỗi server khi xóa file.' });
+    }
+});
+
 
 app.listen(PORT, () => {
     console.log(`Server Backend Cloudinary đang chạy tại cổng ${PORT}`);
