@@ -1,4 +1,4 @@
-// server.js (FIX LỖI UPLOAD và LỌC FILE)
+// server.js (FIX LỖI CUỐI CÙNG: Hiển thị file sau khi upload)
 
 const express = require('express');
 const cors = require('cors');
@@ -19,7 +19,7 @@ cloudinary.config({
 
 const ROOT_FOLDER = 'flutter_file_manager';
 
-// Cấu hình multer để sử dụng file.originalname
+// Cấu hình multer
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
@@ -29,7 +29,6 @@ const storage = new CloudinaryStorage({
         resource_type: 'auto', 
         public_id: (req, file) => {
             const baseName = file.originalname.split('.').slice(0, -1).join('.');
-            // Đảm bảo public_id sử dụng tên file gốc mà không có mã hóa
             return req.body.folder ? 
                    `${req.body.folder}/${baseName}` :
                    `${ROOT_FOLDER}/${baseName}`;
@@ -38,18 +37,13 @@ const storage = new CloudinaryStorage({
     overwrite: true,
 });
 
-// Middleware multer cho phép tải lên nhiều loại file
-const upload = multer({ 
-    storage: storage,
-    limits: { fileSize: 10 * 1024 * 1024 } // Giới hạn 10MB
-});
+const upload = multer({ storage: storage });
 
 app.use(cors());
 app.use(bodyParser.json()); 
 app.use(express.text()); 
 
-
-// === 1. GET: Lấy danh sách file và folder ===
+// === 1. GET: Lấy danh sách file và folder (FIXED LỌC FILE) ===
 app.get('/list', async (req, res) => {
     let currentFolder = req.query.folder || ROOT_FOLDER; 
 
@@ -57,20 +51,17 @@ app.get('/list', async (req, res) => {
         currentFolder = currentFolder.substring(1);
     }
     
-    // Tiền tố để lấy tất cả file trong folder con
-    const prefix = `${currentFolder}/`; 
+    // Tiền tố cho API resources
+    const prefix = currentFolder === ROOT_FOLDER ? '' : `${currentFolder}/`; 
 
     try {
-        // LẤY TẤT CẢ FILE: Lấy tất cả tài nguyên có tiền tố
         const fileResult = await cloudinary.api.resources({
             type: 'upload', 
-            // Nếu ở gốc, lấy prefix rỗng để lấy TẤT CẢ file, kể cả file cũ không có folder
-            prefix: currentFolder === ROOT_FOLDER ? '' : prefix, 
+            prefix: prefix, 
             max_results: 500, 
-            depth: 10,
+            depth: 10, // Giữ depth cao để tìm kiếm
         });
 
-        // Lấy danh sách các thư mục (folders) con
         let folderResult = { folders: [] };
         try {
             folderResult = await cloudinary.api.sub_folders(currentFolder);
@@ -79,9 +70,9 @@ app.get('/list', async (req, res) => {
         }
         
         const combinedList = [];
-        const currentFolderLength = currentFolder.length;
+        const currentFolderIsRoot = currentFolder === ROOT_FOLDER;
 
-        // 1. Thêm các thư mục con
+        // 1. Thêm các thư mục con (Giữ nguyên)
         for (const folder of folderResult.folders) {
             combinedList.push({
                 name: `${currentFolder}/${folder.name}`,
@@ -93,29 +84,27 @@ app.get('/list', async (req, res) => {
             });
         }
         
-        // 2. Thêm các file trực tiếp (FIX LỖI: Cải thiện logic lọc)
+        // 2. Thêm các file trực tiếp (SỬA LỖI LỌC)
         for (const resource of fileResult.resources) {
             const publicId = resource.public_id;
-            
             let isDirectFile = false;
 
-            if (currentFolder === ROOT_FOLDER) {
-                 // Ở thư mục gốc (flutter_file_manager): File trực tiếp là file có publicId KHÔNG chứa '/' ngoài ROOT_FOLDER.
-                 // Ví dụ: "file.txt" (publicId cũ) hoặc "flutter_file_manager/file.txt"
+            if (currentFolderIsRoot) {
+                 // Ở thư mục gốc (flutter_file_manager): Lọc những file KHÔNG nằm trong sub-folder
+                 // Ví dụ: 'file.txt' hoặc 'flutter_file_manager/file.txt' (và không có dấu '/' sau đó)
                  
-                 if (!publicId.includes('/')) {
-                     // File publicId cũ, không có tiền tố folder (ví dụ: image_1.jpg)
-                     isDirectFile = true;
-                 } else if (publicId.startsWith(ROOT_FOLDER)) {
-                     // File có tiền tố ROOT_FOLDER
-                     const relativePath = publicId.substring(ROOT_FOLDER.length + 1);
-                     isDirectFile = relativePath.indexOf('/') === -1;
-                 }
+                 // Lấy phần còn lại của đường dẫn sau khi loại bỏ ROOT_FOLDER/
+                 const relativePath = publicId.startsWith(ROOT_FOLDER) 
+                     ? publicId.substring(ROOT_FOLDER.length + 1)
+                     : publicId; 
+                 
+                 // File trực tiếp nếu không chứa dấu '/' nào HOẶC publicId không có tiền tố folder (file cũ)
+                 isDirectFile = relativePath.indexOf('/') === -1;
 
             } else {
-                 // Ở thư mục con (ví dụ: 'flutter_file_manager/acdc')
-                 const relativePath = publicId.substring(currentFolderLength + 1);
-                 isDirectFile = publicId.startsWith(currentFolder) && relativePath.indexOf('/') === -1;
+                 // Ở thư mục con (ví dụ: 'flutter_file_manager/02')
+                 const relativePath = publicId.substring(currentFolder.length + 1);
+                 isDirectFile = publicId.startsWith(`${currentFolder}/`) && relativePath.indexOf('/') === -1;
             }
             
             if (isDirectFile) {
