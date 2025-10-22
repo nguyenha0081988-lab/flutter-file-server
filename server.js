@@ -1,4 +1,4 @@
-// E:\du an\Flutter\file_manager_app\backend\server.js (ĐÃ SỬA LỖI KHỞI ĐỘNG SERVER DỨT ĐIỂM)
+// E:\du an\Flutter\file_manager_app\backend\server.js (ĐÃ SỬA LỖI ROUTING EXPRESS DỨT ĐIỂM)
 
 const express = require('express');
 const cors = require('cors');
@@ -21,7 +21,7 @@ const CLOUDINARY_FOLDER = 'flutter_file_manager';
 app.use(cors());
 app.use(express.text()); 
 
-// === 1. GET: Lấy danh sách file (Giữ nguyên) ===
+// === 1. GET: Lấy danh sách file ===
 app.get('/list', async (req, res) => {
     try {
         const prefix = CLOUDINARY_FOLDER + '/';
@@ -81,10 +81,9 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 });
 
 // === 3. DELETE: Xóa file khỏi Cloudinary (ĐÃ SỬA LỖI ROUTING VÀ MÃ HÓA URL DỨT ĐIỂM) ===
-// Dùng cú pháp wildcard an toàn nhất: '/delete/*'
+// Sử dụng cú pháp an toàn nhất để bắt toàn bộ đường dẫn tên file
 app.delete('/delete/*', async (req, res) => {
     // Lấy toàn bộ chuỗi sau /delete/ (ví dụ: flutter_file_manager/123-ten_file)
-    // Access tham số wildcard qua req.params[0]
     const encodedId = req.params[0]; 
     
     // Giải mã URL để xử lý ký tự đặc biệt/tiếng Việt
