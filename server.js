@@ -1,4 +1,4 @@
-// server.js (FIX CUỐI CÙNG: Sửa lỗi Internal Server Error)
+// server.js (FIX CUỐI CÙNG: Sửa lỗi Internal Server Error và Lọc file)
 
 const express = require('express');
 const cors = require('cors');
@@ -24,18 +24,17 @@ const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
         folder: (req, file) => {
-            // Folder được lấy từ req.body.folder (được gửi từ Flutter)
             return req.body.folder || ROOT_FOLDER; 
         }, 
         resource_type: 'auto', 
         public_id: (req, file) => {
-            // FIXED: Đảm bảo baseName không bị lỗi khi xử lý tên file
-            const parts = file.originalname.split('.');
-            const extension = parts.length > 1 ? parts.pop() : '';
-            const baseName = parts.join('.');
-
             const currentFolder = req.body.folder || ROOT_FOLDER;
+            
+            // Lấy tên file không có đuôi mở rộng
+            const parts = file.originalname.split('.');
+            const baseName = parts.slice(0, -1).join('.');
 
+            // FIXED: Đảm bảo publicId chỉ là {folder}/{basename}, không bị lặp lại.
             return `${currentFolder}/${baseName}`;
         }
     },
@@ -59,6 +58,7 @@ app.get('/list', async (req, res) => {
         currentFolder = currentFolder.substring(1);
     }
     
+    // Đảm bảo prefix chỉ là chuỗi rỗng nếu ở thư mục gốc
     const prefix = currentFolder === ROOT_FOLDER ? '' : `${currentFolder}/`; 
 
     try {
@@ -94,10 +94,9 @@ app.get('/list', async (req, res) => {
         
         // 2. Thêm các file trực tiếp
         for (const resource of fileResult.resources) {
-            // FIX HIỂN THỊ FILE CŨ: Chỉ cần lấy publicId vì depth=1 đã lọc non-recursive.
-             combinedList.push({
+            combinedList.push({
                 name: resource.public_id, 
-                basename: resource.filename, 
+                basename: resource.filename, // Gửi về null nếu không có
                 size: resource.bytes,
                 url: resource.secure_url, 
                 uploadDate: resource.created_at.split('T')[0],
