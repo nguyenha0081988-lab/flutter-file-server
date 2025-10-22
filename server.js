@@ -1,4 +1,4 @@
-// server.js (ĐÃ SỬA LỖI CUỐI CÙNG: Hiển thị file cũ và Lỗi Xóa 404)
+// server.js (FIX LỖI UPLOAD và LỌC FILE)
 
 const express = require('express');
 const cors = require('cors');
@@ -19,7 +19,7 @@ cloudinary.config({
 
 const ROOT_FOLDER = 'flutter_file_manager';
 
-// Cấu hình multer
+// Cấu hình multer để sử dụng file.originalname
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
@@ -29,6 +29,7 @@ const storage = new CloudinaryStorage({
         resource_type: 'auto', 
         public_id: (req, file) => {
             const baseName = file.originalname.split('.').slice(0, -1).join('.');
+            // Đảm bảo public_id sử dụng tên file gốc mà không có mã hóa
             return req.body.folder ? 
                    `${req.body.folder}/${baseName}` :
                    `${ROOT_FOLDER}/${baseName}`;
@@ -37,11 +38,16 @@ const storage = new CloudinaryStorage({
     overwrite: true,
 });
 
-const upload = multer({ storage: storage });
+// Middleware multer cho phép tải lên nhiều loại file
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 10 * 1024 * 1024 } // Giới hạn 10MB
+});
 
 app.use(cors());
 app.use(bodyParser.json()); 
 app.use(express.text()); 
+
 
 // === 1. GET: Lấy danh sách file và folder ===
 app.get('/list', async (req, res) => {
@@ -51,15 +57,17 @@ app.get('/list', async (req, res) => {
         currentFolder = currentFolder.substring(1);
     }
     
-    const prefix = currentFolder === ROOT_FOLDER ? '' : `${currentFolder}/`;
+    // Tiền tố để lấy tất cả file trong folder con
+    const prefix = `${currentFolder}/`; 
 
     try {
         // LẤY TẤT CẢ FILE: Lấy tất cả tài nguyên có tiền tố
         const fileResult = await cloudinary.api.resources({
             type: 'upload', 
-            prefix: currentFolder === ROOT_FOLDER ? '' : prefix, // Nếu ở gốc, lấy tất cả (prefix rỗng)
-            max_results: 500, // Tăng giới hạn lên 500 để chắc chắn lấy đủ file cũ
-            depth: 10, // Đặt depth cao để lấy tất cả file trong folder
+            // Nếu ở gốc, lấy prefix rỗng để lấy TẤT CẢ file, kể cả file cũ không có folder
+            prefix: currentFolder === ROOT_FOLDER ? '' : prefix, 
+            max_results: 500, 
+            depth: 10,
         });
 
         // Lấy danh sách các thư mục (folders) con
@@ -70,64 +78,55 @@ app.get('/list', async (req, res) => {
             if (e.http_code !== 404) { console.error("Lỗi khi lấy sub_folders:", e); }
         }
         
-        // --- LOGIC LỌC FILE CHÍNH XÁC ---
         const combinedList = [];
-        const foundPaths = new Set();
         const currentFolderLength = currentFolder.length;
 
         // 1. Thêm các thư mục con
         for (const folder of folderResult.folders) {
-            const fullPath = `${currentFolder}/${folder.name}`;
-             if (!foundPaths.has(fullPath)) {
-                combinedList.push({
-                    name: fullPath,
-                    basename: folder.name, 
-                    size: 0,
-                    url: '',
-                    uploadDate: new Date().toISOString().split('T')[0],
-                    isFolder: true, 
-                });
-                foundPaths.add(fullPath);
-            }
+            combinedList.push({
+                name: `${currentFolder}/${folder.name}`,
+                basename: folder.name, 
+                size: 0,
+                url: '',
+                uploadDate: new Date().toISOString().split('T')[0],
+                isFolder: true, 
+            });
         }
         
-        // 2. Thêm các file trực tiếp
+        // 2. Thêm các file trực tiếp (FIX LỖI: Cải thiện logic lọc)
         for (const resource of fileResult.resources) {
             const publicId = resource.public_id;
             
-            // Lọc file: Chỉ lấy file trực tiếp trong folder hiện tại
-            const relativePath = publicId.substring(currentFolderLength); // Bỏ prefix
-            
+            let isDirectFile = false;
+
             if (currentFolder === ROOT_FOLDER) {
-                 // Ở thư mục gốc, chỉ lấy những file KHÔNG nằm trong sub-folder
-                 if (!publicId.includes('/') || publicId.startsWith(ROOT_FOLDER) && publicId.substring(ROOT_FOLDER.length + 1).indexOf('/') === -1) {
-                    if (!foundPaths.has(publicId)) {
-                        combinedList.push({
-                            name: publicId, 
-                            basename: resource.filename, 
-                            size: resource.bytes,
-                            url: resource.secure_url, 
-                            uploadDate: resource.created_at.split('T')[0],
-                            isFolder: false, 
-                        });
-                        foundPaths.add(publicId);
-                    }
+                 // Ở thư mục gốc (flutter_file_manager): File trực tiếp là file có publicId KHÔNG chứa '/' ngoài ROOT_FOLDER.
+                 // Ví dụ: "file.txt" (publicId cũ) hoặc "flutter_file_manager/file.txt"
+                 
+                 if (!publicId.includes('/')) {
+                     // File publicId cũ, không có tiền tố folder (ví dụ: image_1.jpg)
+                     isDirectFile = true;
+                 } else if (publicId.startsWith(ROOT_FOLDER)) {
+                     // File có tiền tố ROOT_FOLDER
+                     const relativePath = publicId.substring(ROOT_FOLDER.length + 1);
+                     isDirectFile = relativePath.indexOf('/') === -1;
                  }
+
             } else {
-                 // Ở thư mục con, chỉ lấy file trực tiếp
-                 if (relativePath.startsWith('/') && relativePath.substring(1).indexOf('/') === -1) {
-                     if (!foundPaths.has(publicId)) {
-                        combinedList.push({
-                            name: publicId, 
-                            basename: resource.filename, 
-                            size: resource.bytes,
-                            url: resource.secure_url, 
-                            uploadDate: resource.created_at.split('T')[0],
-                            isFolder: false, 
-                        });
-                        foundPaths.add(publicId);
-                    }
-                 }
+                 // Ở thư mục con (ví dụ: 'flutter_file_manager/acdc')
+                 const relativePath = publicId.substring(currentFolderLength + 1);
+                 isDirectFile = publicId.startsWith(currentFolder) && relativePath.indexOf('/') === -1;
+            }
+            
+            if (isDirectFile) {
+                combinedList.push({
+                    name: publicId, 
+                    basename: resource.filename, 
+                    size: resource.bytes,
+                    url: resource.secure_url, 
+                    uploadDate: resource.created_at.split('T')[0],
+                    isFolder: false, 
+                });
             }
         }
 
@@ -147,8 +146,22 @@ app.get('/list', async (req, res) => {
     }
 });
 
-// === 2. POST: Tải file lên Cloudinary ===
-// ... (Giữ nguyên)
+// === 2. POST: Tải file lên Cloudinary (DÙNG MIDDLEWARE MULTER) ===
+app.post('/upload', upload.single('file'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).send('Không có file nào được tải lên.');
+    }
+    
+    res.status(201).json({ 
+        message: `Tải/Ghi đè file ${req.file.originalname} thành công!`,
+        file: {
+            name: req.file.filename,
+            size: req.file.size,
+            url: req.file.path,
+            uploadDate: new Date().toISOString().split('T')[0]
+        }
+    });
+});
 
 // === 3. POST: Tạo Thư mục Mới ===
 app.post('/create-folder', async (req, res) => {
@@ -216,7 +229,25 @@ app.delete('/delete-folder', async (req, res) => {
 });
 
 // === 5. DELETE: Xóa File (Sử dụng JSON body) ===
-// ... (Giữ nguyên)
+app.delete('/delete', async (req, res) => {
+    const publicId = req.body.publicId; 
+    
+    if (!publicId) {
+        return res.status(400).json({ error: 'Thiếu publicId để xóa.' });
+    }
+    
+    try {
+        const result = await cloudinary.uploader.destroy(publicId);
+
+        if (result.result === 'ok') {
+            return res.status(200).json({ message: `Đã xóa file ${publicId}` });
+        } else {
+            return res.status(500).json({ error: `Lỗi xóa file: ${result.result}` });
+        }
+    } catch (err) {
+        return res.status(500).json({ error: 'Lỗi server khi xóa file.' });
+    }
+});
 
 
 app.listen(PORT, () => {
