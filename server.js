@@ -1,4 +1,4 @@
-// server.js (ĐÃ SỬA LỖI KHỞI ĐỘNG ROUTING DỨT ĐIỂM)
+// E:\du an\Flutter\file_manager_app\backend\server.js (ĐÃ SỬA LỖI KHỞI ĐỘNG ROUTING DỨT ĐIỂM)
 
 const express = require('express');
 const cors = require('cors');
@@ -58,7 +58,6 @@ app.post('/upload', upload.single('file'), async (req, res) => {
         await cloudinary.uploader.upload_stream(
             { 
                 folder: CLOUDINARY_FOLDER,
-                // Lấy phần tên không có đuôi mở rộng
                 public_id: file_name.split('.')[0], 
                 resource_type: resource_type,
                 overwrite: true, 
@@ -81,17 +80,18 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     }
 });
 
-// === 3. DELETE: Xóa file khỏi Cloudinary (SỬA LỖI KHỞI ĐỘNG DỨT ĐIỂM) ===
-// Sử dụng cú pháp wildcard an toàn nhất: '/delete/*'
-app.delete('/delete/*', async (req, res) => {
-    // Lấy toàn bộ chuỗi sau /delete/ (tham số đầu tiên của wildcard)
-    const encodedId = req.params[0]; 
-    
-    // Giải mã URL để xử lý ký tự đặc biệt/tiếng Việt
-    const publicId = decodeURIComponent(encodedId); 
+// === 3. DELETE: Xóa file khỏi Cloudinary (ĐÃ SỬA LỖI ROUTING VÀ MÃ HÓA URL DỨT ĐIỂM) ===
+// Route KHÔNG có tham số để tránh lỗi Express
+app.delete('/delete', async (req, res) => {
+    // Lấy tên file từ query string (req.query.id)
+    const publicId = req.query.id; 
+
+    // Kiểm tra file
+    if (!publicId) {
+         return res.status(400).json({ error: 'Thiếu tham số tên file (publicId).' });
+    }
 
     try {
-        // Log để kiểm tra tên file trước khi xóa
         console.log(`Attempting to delete Public ID: ${publicId}`);
 
         // Thử xóa 'image' trước, sau đó 'raw'
