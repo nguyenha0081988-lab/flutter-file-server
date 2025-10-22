@@ -21,10 +21,11 @@ const CLOUDINARY_FOLDER = 'flutter_file_manager';
 app.use(cors());
 app.use(express.text()); 
 
-// === 1. GET: Lấy danh sách file (Giữ nguyên) ===
+// === 1. GET: Lấy danh sách file ===
 app.get('/list', async (req, res) => {
     try {
         const prefix = CLOUDINARY_FOLDER + '/';
+        
         const rawFilesPromise = cloudinary.api.resources({ type: 'upload', prefix: prefix, resource_type: 'raw', max_results: 50 });
         const imageFilesPromise = cloudinary.api.resources({ type: 'upload', prefix: prefix, resource_type: 'image', max_results: 50 });
 
@@ -80,12 +81,19 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     }
 });
 
-// === 3. DELETE: Xóa file khỏi Cloudinary (ĐÃ SỬA LỖI MÃ HÓA URL DỨT ĐIỂM) ===
-app.delete('/delete/:fileName', async (req, res) => {
+// === 3. DELETE: Xóa file khỏi Cloudinary (ĐÃ SỬA LỖI ROUTING VÀ MÃ HÓA URL DỨT ĐIỂM) ===
+// Sửa route để nhận tất cả các ký tự sau /delete/ như là một tham số (publicId)
+app.delete('/delete/:publicId(*)', async (req, res) => {
+    // Lấy toàn bộ chuỗi sau /delete/ (đã mã hóa)
+    const encodedId = req.params[0];
+    
     // QUAN TRỌNG: Giải mã URL để xử lý ký tự đặc biệt/tiếng Việt
-    const publicId = decodeURIComponent(req.params.fileName); 
+    const publicId = decodeURIComponent(encodedId); 
 
     try {
+        // Log để kiểm tra tên file trước khi xóa
+        console.log(`Attempting to delete Public ID: ${publicId}`);
+
         // Thử xóa 'image' trước, sau đó 'raw'
         let result = await cloudinary.uploader.destroy(publicId, { resource_type: 'image' });
         if (result.result !== 'ok') {
