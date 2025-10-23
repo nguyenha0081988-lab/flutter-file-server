@@ -1,4 +1,4 @@
-// server.js (FIX LOGIC CUỐI CÙNG: Tăng khả năng hiển thị file)
+// server.js (FIX LOGIC CUỐI CÙNG: Tăng khả năng hiển thị file lên mức tối đa)
 
 const express = require('express');
 const cors = require('cors');
@@ -6,6 +6,7 @@ const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
 const bodyParser = require('body-parser'); 
+const path = require('path'); // Đã thêm path module để xử lý đường dẫn an toàn hơn
 
 const app = express();
 const PORT = process.env.PORT || 3000; 
@@ -48,7 +49,7 @@ app.use(cors());
 app.use(bodyParser.json()); 
 app.use(express.text()); 
 
-// === 1. GET: Lấy danh sách file và folder ===
+// === 1. GET: Lấy danh sách file và folder (FIXED LỌC FILE LẦN CUỐI) ===
 app.get('/list', async (req, res) => {
     let currentFolder = req.query.folder || ROOT_FOLDER; 
 
@@ -56,16 +57,16 @@ app.get('/list', async (req, res) => {
         currentFolder = currentFolder.substring(1);
     }
     
-    // Nếu là ROOT_FOLDER, prefix rỗng để lấy tất cả (kể cả file cũ không có folder)
+    // Nếu là ROOT_FOLDER, prefix rỗng để lấy tất cả tài nguyên ở gốc và thư mục con cấp 1
     const prefix = currentFolder === ROOT_FOLDER ? '' : `${currentFolder}/`; 
 
     try {
-        // LẤY FILE VÀ FOLDER CON (NON-RECURSIVE)
+        // TĂNG DEPTH VÀ KHÔNG DÙNG PREFIX KHI Ở GỐC: Lấy tất cả file ở cấp hiện tại
         const fileResult = await cloudinary.api.resources({
             type: 'upload', 
             prefix: prefix, 
             max_results: 500, 
-            depth: 1, // Lấy file ở cấp hiện tại
+            depth: 1, // Lấy file ở cấp hiện tại và thư mục con ngay bên dưới
         });
 
         let folderResult = { folders: [] };
@@ -76,6 +77,7 @@ app.get('/list', async (req, res) => {
         }
         
         const combinedList = [];
+        const currentFolderLength = currentFolder.length;
 
         // 1. Thêm các thư mục con
         for (const folder of folderResult.folders) {
@@ -89,16 +91,42 @@ app.get('/list', async (req, res) => {
             });
         }
         
-        // 2. Thêm các file trực tiếp
+        // 2. Thêm các file trực tiếp (LỌC FILE CUỐI CÙNG)
         for (const resource of fileResult.resources) {
-             combinedList.push({
-                name: resource.public_id, 
-                basename: resource.filename, // SỬ DỤNG FILENAME (bao gồm đuôi mở rộng)
-                size: resource.bytes,
-                url: resource.secure_url, 
-                uploadDate: resource.created_at.split('T')[0],
-                isFolder: false, 
-            });
+            const publicId = resource.public_id;
+
+            // Lấy đường dẫn tương đối sau folder hiện tại
+            const relativePath = publicId.startsWith(currentFolder) 
+                ? publicId.substring(currentFolderLength)
+                : publicId; 
+            
+            let isDirectFile = false;
+
+            if (currentFolder === ROOT_FOLDER) {
+                 // Ở thư mục gốc, file trực tiếp là file có publicId KHÔNG chứa '/' nào
+                 // (hoặc chỉ có 1 dấu '/' ngay sau ROOT_FOLDER)
+                 // Thêm kiểm tra file cũ không có tiền tố folder
+                 if (publicId.indexOf('/') === -1 || publicId.startsWith(ROOT_FOLDER) && publicId.substring(ROOT_FOLDER.length + 1).indexOf('/') === -1) {
+                     isDirectFile = true;
+                 }
+            } else {
+                 // Ở thư mục con (ví dụ: 'flutter_file_manager/01')
+                 // File trực tiếp là file có dấu '/' ngay sau currentFolder và không có dấu '/' nào khác
+                 if (relativePath.startsWith('/') && relativePath.substring(1).indexOf('/') === -1) {
+                     isDirectFile = true;
+                 }
+            }
+            
+            if (isDirectFile) {
+                 combinedList.push({
+                    name: publicId, 
+                    basename: resource.filename, 
+                    size: resource.bytes,
+                    url: resource.secure_url, 
+                    uploadDate: resource.created_at.split('T')[0],
+                    isFolder: false, 
+                });
+            }
         }
 
         res.status(200).json({
