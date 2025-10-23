@@ -1,4 +1,4 @@
-// server.js (ĐÃ SỬA LỖI KHỞI ĐỘNG RENDER)
+// server.js (FIX LOGIC CUỐI CÙNG: Tăng khả năng hiển thị file)
 
 const express = require('express');
 const cors = require('cors');
@@ -30,11 +30,9 @@ const storage = new CloudinaryStorage({
         public_id: (req, file) => {
             const currentFolder = req.body.folder || ROOT_FOLDER;
             
-            // Lấy tên file không có đuôi mở rộng
             const parts = file.originalname.split('.');
             const baseName = parts.slice(0, -1).join('.');
 
-            // Đảm bảo publicId luôn là {folder_path}/{basename}
             return `${currentFolder}/${baseName}`;
         }
     },
@@ -58,15 +56,16 @@ app.get('/list', async (req, res) => {
         currentFolder = currentFolder.substring(1);
     }
     
-    // Tiền tố cho API resources. Nếu là ROOT_FOLDER, prefix rỗng để lấy tất cả (kể cả file cũ).
+    // Nếu là ROOT_FOLDER, prefix rỗng để lấy tất cả (kể cả file cũ không có folder)
     const prefix = currentFolder === ROOT_FOLDER ? '' : `${currentFolder}/`; 
 
     try {
+        // LẤY FILE VÀ FOLDER CON (NON-RECURSIVE)
         const fileResult = await cloudinary.api.resources({
             type: 'upload', 
             prefix: prefix, 
             max_results: 500, 
-            depth: 1, 
+            depth: 1, // Lấy file ở cấp hiện tại
         });
 
         let folderResult = { folders: [] };
@@ -94,7 +93,7 @@ app.get('/list', async (req, res) => {
         for (const resource of fileResult.resources) {
              combinedList.push({
                 name: resource.public_id, 
-                basename: resource.filename, 
+                basename: resource.filename, // SỬ DỤNG FILENAME (bao gồm đuôi mở rộng)
                 size: resource.bytes,
                 url: resource.secure_url, 
                 uploadDate: resource.created_at.split('T')[0],
