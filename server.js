@@ -1,4 +1,4 @@
-// server.js (FIX LOGIC CUỐI CÙNG: Đảm bảo File Word/Tất cả File hiển thị)
+// server.js (ĐÃ SỬA LỖI KHỞI ĐỘNG RENDER)
 
 const express = require('express');
 const cors = require('cors');
@@ -26,10 +26,11 @@ const storage = new CloudinaryStorage({
         folder: (req, file) => {
             return req.body.folder || ROOT_FOLDER; 
         }, 
-        resource_type: 'auto', // Giữ nguyên 'auto' để Cloudinary xác định loại file
+        resource_type: 'auto', 
         public_id: (req, file) => {
             const currentFolder = req.body.folder || ROOT_FOLDER;
             
+            // Lấy tên file không có đuôi mở rộng
             const parts = file.originalname.split('.');
             const baseName = parts.slice(0, -1).join('.');
 
@@ -76,7 +77,7 @@ app.get('/list', async (req, res) => {
         }
         
         const combinedList = [];
-        
+
         // 1. Thêm các thư mục con
         for (const folder of folderResult.folders) {
             combinedList.push({
@@ -93,7 +94,7 @@ app.get('/list', async (req, res) => {
         for (const resource of fileResult.resources) {
              combinedList.push({
                 name: resource.public_id, 
-                basename: resource.filename, // SỬ DỤNG FILENAME (bao gồm đuôi mở rộng)
+                basename: resource.filename, 
                 size: resource.bytes,
                 url: resource.secure_url, 
                 uploadDate: resource.created_at.split('T')[0],
