@@ -1,4 +1,4 @@
-// server.js (FIX CUỐI CÙNG: Sửa lỗi public_id bị lặp và hiển thị file mới)
+// server.js (FIX LOGIC CUỐI CÙNG: Tăng khả năng hiển thị file)
 
 const express = require('express');
 const cors = require('cors');
@@ -24,18 +24,15 @@ const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
         folder: (req, file) => {
-            // Folder được lấy từ req.body.folder (folder đầy đủ)
             return req.body.folder || ROOT_FOLDER; 
         }, 
         resource_type: 'auto', 
         public_id: (req, file) => {
             const currentFolder = req.body.folder || ROOT_FOLDER;
             
-            // Lấy tên file không có đuôi mở rộng
             const parts = file.originalname.split('.');
             const baseName = parts.slice(0, -1).join('.');
 
-            // FIXED LỖI LẶP: publicId chỉ cần là {folder}/{basename}. Cloudinary sẽ tự xử lý.
             return `${currentFolder}/${baseName}`;
         }
     },
@@ -59,16 +56,16 @@ app.get('/list', async (req, res) => {
         currentFolder = currentFolder.substring(1);
     }
     
-    // Tiền tố cho API resources
+    // Tiền tố cho API resources. Nếu là ROOT_FOLDER, prefix rỗng để lấy tất cả (kể cả file cũ).
     const prefix = currentFolder === ROOT_FOLDER ? '' : `${currentFolder}/`; 
 
     try {
-        // LẤY FILE VÀ FOLDER CON (NON-RECURSIVE)
+        // Tăng max_results và depth để đảm bảo lấy đủ file cũ
         const fileResult = await cloudinary.api.resources({
             type: 'upload', 
             prefix: prefix, 
-            max_results: 500, 
-            depth: 1, // Lấy file ở cấp hiện tại
+            max_results: 500, // Tăng giới hạn hiển thị
+            depth: currentFolder === ROOT_FOLDER ? 1 : 2, // 1 cho thư mục gốc, 2 cho thư mục con
         });
 
         let folderResult = { folders: [] };
@@ -96,7 +93,7 @@ app.get('/list', async (req, res) => {
         for (const resource of fileResult.resources) {
              combinedList.push({
                 name: resource.public_id, 
-                basename: resource.filename, // Gửi về null nếu không có
+                basename: resource.filename, 
                 size: resource.bytes,
                 url: resource.secure_url, 
                 uploadDate: resource.created_at.split('T')[0],
