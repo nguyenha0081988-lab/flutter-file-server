@@ -48,7 +48,7 @@ app.use(cors());
 app.use(bodyParser.json()); 
 app.use(express.text()); 
 
-// === 1. GET: Lấy danh sách file và folder ===
+// === 1. GET: Lấy danh sách file và folder (FIXED LỌC FILE CUỐI CÙNG) ===
 app.get('/list', async (req, res) => {
     let currentFolder = req.query.folder || ROOT_FOLDER; 
 
@@ -57,18 +57,21 @@ app.get('/list', async (req, res) => {
     }
     
     // Nếu là ROOT_FOLDER, prefix rỗng để lấy tất cả tài nguyên ở gốc và thư mục con cấp 1
+    // Nếu là thư mục con, prefix là folder đó.
     const prefix = currentFolder === ROOT_FOLDER ? '' : `${currentFolder}/`; 
 
     try {
+        // Lấy file với depth = 1 (NON-RECURSIVE)
         const fileResult = await cloudinary.api.resources({
             type: 'upload', 
             prefix: prefix, 
             max_results: 500, 
-            depth: currentFolder === ROOT_FOLDER ? 1 : 2, // Tăng depth cho thư mục con
+            depth: 1, 
         });
 
         let folderResult = { folders: [] };
         try {
+            // Lấy các folder con
             folderResult = await cloudinary.api.sub_folders(currentFolder);
         } catch (e) {
             if (e.http_code !== 404) { console.error("Lỗi khi lấy sub_folders:", e); }
@@ -76,6 +79,7 @@ app.get('/list', async (req, res) => {
         
         const combinedList = [];
         const currentFolderLength = currentFolder.length;
+        const isRoot = currentFolder === ROOT_FOLDER;
 
         // 1. Thêm các thư mục con
         for (const folder of folderResult.folders) {
@@ -89,20 +93,23 @@ app.get('/list', async (req, res) => {
             });
         }
         
-        // 2. Thêm các file trực tiếp (FIX LỌC FILE CUỐI CÙNG)
+        // 2. Thêm các file trực tiếp
         for (const resource of fileResult.resources) {
             const publicId = resource.public_id;
             let isDirectFile = false;
 
-            if (currentFolder === ROOT_FOLDER) {
-                 // Ở thư mục gốc, file trực tiếp là file KHÔNG nằm trong sub-folder
-                 const parts = publicId.split('/');
-                 // File trực tiếp nếu chỉ có 1 phần tử (file cũ) hoặc 2 phần tử (file mới)
-                 if (parts.length <= 1 || (parts.length === 2 && parts[0] === ROOT_FOLDER)) {
+            if (isRoot) {
+                 // Trường hợp 1: File không có folder (file cũ): publicId = "file.ext"
+                 if (publicId.indexOf('/') === -1) {
                      isDirectFile = true;
+                 } 
+                 // Trường hợp 2: File có tiền tố ROOT_FOLDER: publicId = "flutter_file_manager/file.ext"
+                 else if (publicId.startsWith(ROOT_FOLDER)) {
+                     const relativePath = publicId.substring(ROOT_FOLDER.length + 1);
+                     isDirectFile = relativePath.indexOf('/') === -1;
                  }
             } else {
-                 // Ở thư mục con, file trực tiếp nếu không có dấu '/' nào sau tên folder hiện tại
+                 // Ở thư mục con: file trực tiếp nếu publicId bắt đầu bằng currentFolder/
                  const relativePath = publicId.substring(currentFolderLength + 1);
                  if (publicId.startsWith(`${currentFolder}/`) && relativePath.indexOf('/') === -1) {
                      isDirectFile = true;
